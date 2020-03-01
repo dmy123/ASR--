@@ -1,4 +1,4 @@
-# ASR--
+# ASR-Adaptive Search with Resampling
 自适应重采样搜索算法
 C++与Python版
 
