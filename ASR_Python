@@ -1,0 +1,218 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Jan  4 10:07:15 2020
+
+@author: 雷神
+
+程序内容：自适应重采样搜索算法
+
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+import math
+import random
+
+def main():
+    dimension = 2
+    feasible_region = np.array([[0, 50], [0, 50]])
+    r = np.array([1, 1])
+    ASR(dimension, feasible_region, r) 
+    return 0
+
+def ASR(dimension, feasible_region , r):
+    """参数定义"""
+    b = 1.1
+    c = 0.5
+    Ck = 1
+    g = 0.5
+    delta = 0.01
+    K = 10
+    T = 0.1
+    """参数定义"""
+    
+    i = 1
+    k = 0
+    #iterations = 100000
+    iterations = 800
+    accepted_count = 1
+    simulation_budget = 1
+    
+    accepted_set = np.zeros((20000, dimension + 1))
+    accepted_count = 0
+    best_solution = np.zeros(dimension + 1)
+    best_solution_loc = 0
+    best_solution_change = np.zeros((100, dimension + 1))
+    best_solution_change_count = 0
+    paint = np.zeros((100, 3))
+    
+    start = time.time()
+    
+    while (k <= iterations):
+        k = k + 1
+        if (k == M(i, b)):
+            new_sample = np.zeros(dimension)
+            if (uniformly_distribution(0, 1) < g or i == 1):
+                for dim in range(dimension):
+                    accepted_set[accepted_count][dim] = uniformly_distribution(feasible_region[dim][0], feasible_region[dim][1])
+                    new_sample[dim] = accepted_set[accepted_count][dim]
+            else:
+                for dim in range(dimension):
+                    local_min = max(best_solution[dim] - r[dim], feasible_region[dim][0])
+                    local_max = min(best_solution[dim] + r[dim], feasible_region[dim][1])
+                    accepted_set[accepted_count][dim] = uniformly_distribution(local_min, local_max)
+                    new_sample[dim] = accepted_set[accepted_count][dim]
+            
+            #new_sample_value = test_2_twohills(new_sample)
+            new_sample_value = -function(new_sample)
+            accepted_set[accepted_count][dimension] = new_sample_value
+            
+            if (i == 1):
+                for dim in range(dimension + 1):
+                    best_solution[dim] = accepted_set[accepted_count][dim]
+                    best_solution_change[best_solution_change_count][dim] = accepted_set[accepted_count][dim]
+                
+                estimated_value = {accepted_count:[new_sample_value, 1]}
+                #paint[best_solution_change_count] = [simulation_budget, test_2_twohills_withoutnoise(new_sample) , new_sample_value]
+                paint[best_solution_change_count] = [simulation_budget, -function(new_sample) , new_sample_value]
+                accepted_count = accepted_count + 1
+                best_solution_change_count = best_solution_change_count + 1
+            else:
+                count = K - 1
+                add = new_sample_value
+                while (count > 0):
+                    #add += test_2_twohills(new_sample)
+                    add += -function(new_sample)
+                    count = count - 1
+                
+                simulation_budget += K
+                new_sample_value = add / K
+                if (new_sample_value >= best_solution[dimension] - delta):
+                    estimated_value[accepted_count] = [new_sample_value, 1]                           # 
+                    accepted_count = accepted_count + 1
+            
+            for t in range(accepted_count):
+                if (estimated_value[t][1] < rise_rate_K(i, c, Ck)):
+                    additional_ob_times = rise_rate_K(i, c, Ck) - estimated_value[t][1]
+                    additional_observe = 0
+                    simulation_budget = simulation_budget + additional_ob_times
+                    estimated_value[t][1] = estimated_value[t][1] + additional_ob_times
+                    while (additional_ob_times > 0):
+                        #additional_observe = additional_observe + test_2_twohills(accepted_set[t][:dimension])
+                        additional_observe = additional_observe - function(accepted_set[t][:dimension])
+                        additional_ob_times = additional_ob_times - 1
+                        
+                    estimated_value[t][0] = estimated_value[t][0] + additional_observe
+                    accepted_set[t][dimension] = estimated_value[t][0] / estimated_value[t][1]
+                    if (t == best_solution_loc):
+                        best_solution[dimension] = accepted_set[t][dimension]
+                    if (accepted_set[t][dimension] > best_solution[dimension]):
+                        for dim in range(dimension + 1):
+                            best_solution[dim] = accepted_set[t][dim]
+                            best_solution_change[best_solution_change_count][dim] = accepted_set[t][dim]
+                        
+                        #paint[best_solution_change_count] = [simulation_budget,  test_2_twohills_withoutnoise(accepted_set[t][:dimension]) ,best_solution[dimension]]
+                        paint[best_solution_change_count] = [simulation_budget,  -function(accepted_set[t][:dimension]) ,best_solution[dimension]]
+                        best_solution_loc = t
+                        best_solution_change_count = best_solution_change_count + 1
+            i = i + 1
+        else:
+            k_ = M(math.floor(math.pow(k, 1 / b)), b)                              # flag
+            probability = np.zeros(accepted_count)
+            tk_ = Tk_(T, k_)
+            #pk = decimal.Decimal(0)
+            pk = 0
+            for t in range(accepted_count):
+                #probability[t] = int(pk + decimal.Decimal(math.exp(decimal.Decimal(accepted_set[t][dimension]) / decimal.Decimal(tk_))))
+                #probability[t] = pk + decimal.Decimal(math.e ** (accepted_set[t][dimension] / tk_))
+                probability[t] = pk + np.exp(accepted_set[t][dimension] / tk_)
+                #pk = decimal.Decimal(probability[t])
+                pk = probability[t]
+                
+            resample = uniformly_distribution(0, probability[accepted_count - 1])
+            resample_loc = find_resample(resample, probability)
+            #resample_value = test_2_twohills(accepted_set[resample_loc][:dimension])
+            resample_value = -function(accepted_set[resample_loc][:dimension])
+            simulation_budget = simulation_budget + 1
+            estimated_value[resample_loc][0] = estimated_value[resample_loc][0] + resample_value
+            estimated_value[resample_loc][1] = estimated_value[resample_loc][1] + 1
+            accepted_set[resample_loc][dimension] = estimated_value[resample_loc][0] / estimated_value[resample_loc][1]
+            if (accepted_set[resample_loc][dimension] > accepted_set[best_solution_loc][dimension]):
+                for dim in range(dimension + 1):
+                    best_solution[dim] = accepted_set[resample_loc][dim]
+                    best_solution_change[best_solution_change_count][dim] = accepted_set[t][dim]
+                
+                #paint[best_solution_change_count] = [simulation_budget, test_2_twohills_withoutnoise(accepted_set[resample_loc][:dimension]), best_solution[dimension]]
+                paint[best_solution_change_count] = [simulation_budget, -function(accepted_set[resample_loc][:dimension]), best_solution[dimension]]
+                best_solution_loc = resample_loc
+                best_solution_change_count = best_solution_change_count + 1
+    end = time.time()
+    #print(probability)
+    print("Execution Time", end - start)
+    print("接收点集合数量",accepted_count)
+    print("最优点变化数量", best_solution_change_count)
+    print("best_solution变化：",best_solution_change[:best_solution_change_count])
+    print("best_solution", best_solution)
+    print("paint", paint[:best_solution_change_count])
+    #painting = np.array(paint[:best_solution_change_count][:2])
+    print(paint[:best_solution_change_count, 0])
+    print(paint[:best_solution_change_count, 2])
+    #plt.plot(paint[:best_solution_change_count, 0],paint[:best_solution_change_count, 1])
+    plt.plot(paint[:best_solution_change_count, 0], -paint[:best_solution_change_count, 2], color='orangered', linewidth=1)
+    plt.scatter(paint[:best_solution_change_count, 0], -paint[:best_solution_change_count, 2], color='orangered',marker="*")
+    plt.xlabel('number of objective function evaluations')
+    plt.ylabel('the optimal solution')
+    plt.show()
+    return 0
+            
+            
+def M(i, b):
+    return math.floor(math.pow(i, b))
+
+def rise_rate_K(k, c, Ck):
+    return math.floor(Ck * math.pow(k, c) + 1)
+
+def Tk_(T, k_):
+    return T/ math.log(k_ + 1)
+
+def uniformly_distribution(a, b):
+    return random.uniform(a, b)
+
+def find_resample(resample, probability):
+    begin = 0
+    end = probability.size
+    while (begin < end):
+        mid = int(begin + (end - begin)/2)
+        if (probability[mid] > resample):
+            end = mid
+        elif (probability[mid] < resample):
+            begin = mid + 1
+        else:
+            return mid
+    
+    if (begin == 0):
+        return 0
+    return begin - 1;
+
+def float_equal(a, b):
+    return math.inclose(a, b, rel_tol = 1e-7)                                   # 
+
+def noise(mean_value, variance):
+    return np.random.normal(loc = mean_value, scale = variance, size = None)
+
+def test_2_twohills(solution):
+    f1 = -math.pow(0.4 * solution[0] - 5, 2) - 2 * math.pow(0.4 * solution[1] - 17, 2) + 7
+    f2 = -math.pow(0.4 * solution[0] - 12, 2) - math.pow(0.4 * solution[1] - 4, 2) + 4
+    res = max(f1, f2)
+    res = max(res, 0)
+    return res + noise(0, 50)
+
+def test_2_twohills_withoutnoise(solution):
+    f1 = -math.pow(0.4 * solution[0] - 5, 2) - 2 * math.pow(0.4 * solution[1] - 17, 2) + 7
+    f2 = -math.pow(0.4 * solution[0] - 12, 2) - math.pow(0.4 * solution[1] - 4, 2) + 4
+    res = max(f1, f2)
+    res = max(res, 0)
+    return res
+
+main()
