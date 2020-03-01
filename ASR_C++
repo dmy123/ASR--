@@ -1,0 +1,350 @@
+// algorithm_ASR.cpp : 定义控制台应用程序的入口点。
+//
+
+#include "stdafx.h"
+#include <Windows.h>
+#include <iostream>
+#include <time.h>
+#include <unordered_map>
+#include <unordered_set>
+#include <chrono>
+#include <random>
+using namespace std;
+
+float adaptive_search_resampling(int dimension, float feasible_region_min, float feasible_region_max, float r);
+int M(int i, float b);
+int rise_rate_K(int k, float c, float Ck);
+float Tk_(float T, int k_);
+float uniformly_distribution(float a, float b);
+int find_resample(float resample, vector<float> probability);
+
+bool float_equal(float a, float b);
+
+float noise(int mean_value, int variance);
+float test_1_smooth_without_noise(vector<float> solution);
+float test_1_smooth(vector<float> solution);
+float test_2_twohills_without_noise(vector<float> solution);
+float test_2_twohills(vector<float> solution);
+float test_3_rosenbrock_without_noise(vector<float> solution);
+float test_3_rosenbrock(vector<float> solution);
+
+float main()
+{
+	float result = 0;
+	/*                                        test_1_smooth:
+	cout<<"求解test_1_smooth"<<endl;
+	int dimension = 2;
+	float feasible_region_min = 0.0f;
+	float feasible_region_max = 1.0f; 
+	float r = 0.02f;                       // 0.02-smooth problem, 1.0-two hills problem, 0.4-Rosenbrock problems.
+	*/
+	/*                                        test_2_twohills:
+	cout<<"求解test_2_twohills"<<endl;
+	int dimension = 2;
+	float feasible_region_min = 0.0f;
+	float feasible_region_max = 50.0f;
+	float r = 1.0f;                        // 0.02-smooth problem, 1.0-two hills problem, 0.4-Rosenbrock problems.
+	*/
+	cout << "求解test_3_rosenbrock" << endl;
+	int dimension = 2;
+	float feasible_region_min = -10.0f;
+	float feasible_region_max = 10.0f;
+	float r = 0.4f;                        // 0.02-smooth problem, 1.0-two hills problem, 0.4-Rosenbrock problems.
+	result = adaptive_search_resampling(dimension, feasible_region_min, feasible_region_max, r);   // 不同问题对应的参数r不同
+	cout << result << endl;
+	system("pause");
+    return result;
+}
+
+float adaptive_search_resampling(int dimension, float feasible_region_min, float feasible_region_max, float r)
+{
+	/*********************     参数定义     *********************/
+	float b = 1.1f;                        // 采样/重采样条件参数 b >=1
+	float c = 0.5f;                        // 增长率指数
+	float Ck = 1.0f;                       // 增长率系数
+	float g = 0.5f;                        // 全局采样概率
+	float delta = 0.01f;                   // 接受标准参数
+	int K = 10;                            // 判断采样点是否符合接受标准前对其最少采样次数
+	float T = 0.1f;                        // 重采样概率系数
+	/*********************     参数定义     *********************/
+
+	int i = 1;                             // 采样次数
+	int k = 0;                             // 迭代次数
+	int iterations = 700000;               // 迭代终止次数
+	int accepted_count = 1;                // 接收点个数
+	int simulation_budget = 1;             // 仿真代价，计算目标函数估计数量，用于作图
+
+	float result = 3.402823466e+38f;
+	vector<pair<vector<float>, float>> accepted_set;                   // 接受采样点集
+	unordered_map < int, pair<float,int> > estimated_value;            // 接受采样点的观测函数和与观测次数
+	pair<vector<float>, float> best_solution;                          // 最佳解
+	int best_solution_loc = 0;                                         // 最佳解在接受采样点集的位置
+	vector<pair<vector<float>, float>> best_solution_change;
+	vector<pair<int, float>> paint;
+
+	clock_t start, finish;
+	start = clock();
+
+	while (k <= iterations && best_solution_change.size() <= 100)
+	{
+		++k;
+		if (k == M(i, b))
+		{
+			vector<float> new_sample(dimension);
+			if (uniformly_distribution(0.0f, 1.0f) < g || i == 1)                    // 以概率g全局探索新解
+			{
+				for (int i = 0; i < dimension; ++i)
+				{
+					new_sample[i] = uniformly_distribution(feasible_region_min, feasible_region_max);
+				}
+			}
+			else                                                                    // 以概率1 - g局部探索新解
+			{
+				for (int i = 0; i < dimension; ++i)
+				{
+					// 注意不要超过可行域，需补充该功能
+					float local_min = max(best_solution.first[i] - r, feasible_region_min);
+					float local_max = min(best_solution.first[i] + r, feasible_region_max);
+					new_sample[i] = uniformly_distribution(local_min, local_max);
+				}
+			}
+			// float new_sample_value = test_1_smooth(new_sample);
+			// float new_sample_value = test_2_twohills(new_sample);
+			float new_sample_value = test_3_rosenbrock(new_sample);
+			// 用接受标准判断是否接受该点
+			if (i == 1)
+			{
+				best_solution.first = new_sample;
+				best_solution.second = new_sample_value;
+
+				accepted_set.push_back({ new_sample,new_sample_value });
+				estimated_value.insert({ 0,{ new_sample_value, 1 } });
+				best_solution_change.push_back({ new_sample,new_sample_value });
+				paint.push_back({ simulation_budget, new_sample_value });
+			}
+			else
+			{
+				int count = K - 1;
+				float add = new_sample_value;
+				while (count > 0)
+				{
+					//add += test_1_smooth(new_sample);
+					//add += test_2_twohills(new_sample);
+					add += test_3_rosenbrock(new_sample);
+					--count;
+				}
+				simulation_budget += K;
+				new_sample_value = add / K;
+				if (new_sample_value >= best_solution.second - delta)
+				{
+					accepted_set.push_back({ new_sample,new_sample_value });
+					estimated_value.insert({ accepted_count,{ new_sample_value, 1 } });
+					++accepted_count;
+				}
+			}
+			// 使得所有接受集中的点的观测次数大于等于最低增长率K
+			for (auto it = estimated_value.begin(); it != estimated_value.end(); ++it)
+			{
+				if (it->second.second < rise_rate_K(i, c, Ck))
+				{
+					int additional_ob_times = rise_rate_K(i, c, Ck) - it->second.second;
+					float additional_observe = 0;
+					simulation_budget += additional_ob_times;
+					it->second.second += additional_ob_times;
+					while (additional_ob_times > 0)
+					{
+						//additional_observe += test_1_smooth(accepted_set[it->first].first);
+						//additional_observe += test_2_twohills(accepted_set[it->first].first);
+						additional_observe += test_3_rosenbrock(accepted_set[it->first].first);
+						--additional_ob_times;
+					}
+					it->second.first += additional_observe;
+					accepted_set[it->first].second = it->second.first / it->second.second;
+					if (it->first == best_solution_loc)
+						best_solution.second = accepted_set[it->first].second;
+					if (accepted_set[it->first].second > best_solution.second)
+					{
+						best_solution = { accepted_set[it->first].first, accepted_set[it->first].second };
+						best_solution_loc = it->first;
+						best_solution_change.push_back({ best_solution.first, best_solution.second });
+						paint.push_back({ simulation_budget, best_solution.second });
+					}
+				}
+			}
+			++i;
+		}
+		else
+		{
+			// 以重采样策略在已接受采样点集采样一个点
+			int k_ = M(int(pow(k, 1 / b)), b);                                // 上一次采样时的迭代次数k
+			vector<float> probability(accepted_set.size());
+			float tk_ = Tk_(T, k_);
+			float pk = 0.0f;
+			for (unsigned int i = 0; i < accepted_set.size(); ++i)
+			{
+				probability[i] = pk + exp(accepted_set[i].second / tk_);
+				pk = probability[i];
+			}
+			float resample = uniformly_distribution(0.0f, probability[probability.size() - 1]);
+			int resample_loc = find_resample(resample, probability);
+			//float resample_value = test_1_smooth(accepted_set[resample_loc].first);
+			//float resample_value = test_2_twohills(accepted_set[resample_loc].first);
+			float resample_value = test_3_rosenbrock(accepted_set[resample_loc].first);
+			++simulation_budget;
+			estimated_value[resample_loc].first += resample_value;
+			estimated_value[resample_loc].second += 1;
+			accepted_set[resample_loc].second = estimated_value[resample_loc].first / estimated_value[resample_loc].second;
+			if (accepted_set[resample_loc].second > accepted_set[best_solution_loc].second)
+			{
+				best_solution = { accepted_set[resample_loc].first, accepted_set[resample_loc].second };
+				best_solution_loc = resample_loc;
+				best_solution_change.push_back({ best_solution.first, best_solution.second });
+				paint.push_back({ simulation_budget, best_solution.second });
+			}
+		}
+
+	}
+	finish = clock();
+	float duration = (float)(finish - start) / CLOCKS_PER_SEC;                // 程序运行时间	
+	cout << "程序运行耗时:  " << duration << "秒。" << endl;
+
+	for (int i = 0; i < dimension; ++i)
+		cout << best_solution.first[i] << ",";
+	result = best_solution.second;
+	cout << "收敛性：" << endl;
+	for (unsigned int i = 0; i < best_solution_change.size(); ++i)
+	{
+		cout << "[" << best_solution_change[i].first[0] << "," << best_solution_change[i].first[1] << "]" << ":" << best_solution_change[i].second;
+		//cout << "             "<<test_1_smooth_without_noise(best_solution_change[i].first) << endl;
+		//cout << "             " << test_2_twohills_without_noise(best_solution_change[i].first) << endl;
+		cout << "             " << test_3_rosenbrock_without_noise(best_solution_change[i].first) << endl;
+	}
+	cout << "****************************分割线*******************************" << endl;
+	for (unsigned int i = 0; i < best_solution_change.size(); ++i)
+	{
+		//cout << "[" << paint[i].first << "," << paint[i].second << "]" << ",";
+		//cout << "[" << paint[i].first << "," << test_1_smooth_without_noise(best_solution_change[i].first) << "]" << ",";
+		//cout << "[" << paint[i].first << "," << test_2_twohills_without_noise(best_solution_change[i].first) << "]" << ",";
+		cout << "[" << paint[i].first << "," << test_3_rosenbrock_without_noise(best_solution_change[i].first) << "]" << ",";
+		cout << endl;
+	}
+	cout << "最佳点" << best_solution_change.size() << endl;
+	return result;
+}
+
+int M(int i, float b)
+{
+	return int(pow(i, b));
+}
+
+int rise_rate_K(int k, float c, float Ck)
+{
+	return int(Ck * pow(k, c) + 1);
+}
+
+float Tk_(float T, int k_)
+{
+	return T / float(log(k_ + 1));
+}
+
+float uniformly_distribution(float a,float b)                // N(a,b)均匀分布
+{
+	unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+	default_random_engine generator(seed);
+	uniform_real_distribution<float> distribution(a, b);
+	return distribution(generator);
+}
+
+int find_resample(float resample, vector<float> probability)
+{
+	int begin = 0;
+	int end = probability.size();
+	while (begin < end)
+	{
+		int mid = begin + (end - begin) / 2;
+		if (probability[mid] > resample)
+		{
+			end = mid;
+		}
+		else if (probability[mid] < resample)
+		{
+			begin = mid + 1;
+		}
+		else
+		{
+			return mid;
+		}
+	}
+	if (begin == 0)
+		return 0;
+	return begin - 1;
+}
+
+bool float_equal(float a, float b)
+{
+	if (abs(a - b) < FLT_EPSILON)
+		return true;
+	else
+		return false;
+}
+
+float noise(int mean_value, int variance)                 // N(0,1)正态分布
+{
+	unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+	default_random_engine generator(seed);
+	normal_distribution<float> dist(mean_value, variance);
+	float noise_ = dist(generator);
+	return noise_;
+}
+
+float test_1_smooth_without_noise(vector<float> solution)
+{
+	float res = -((solution[0] - 0.5f) * sin(10 * solution[0]) + (solution[1] + 0.5f) * cos(5 * solution[1]));
+	return res;
+}
+float test_1_smooth(vector<float> solution)
+{
+	float res = -((solution[0] - 0.5f) * sin(10 * solution[0]) + (solution[1] + 0.5f) * cos(5 * solution[1]));
+	res = res + noise(0,1);
+	return res;
+}
+
+float test_2_twohills_without_noise(vector<float> solution)
+{
+	float f1 = -pow(0.4f * solution[0] - 5, 2) - 2 * pow(0.4f * solution[1] - 17, 2) + 7;
+	float f2 = -pow(0.4f * solution[0] - 12, 2) - pow(0.4f * solution[1] - 4, 2) + 4;
+	float res = max(f1, f2);
+	res = max(res, 0);
+	return res;
+}
+
+float test_2_twohills(vector<float> solution)
+{
+	float f1 = - pow(0.4f * solution[0] - 5, 2) - 2 * pow(0.4f * solution[1] - 17, 2) + 7;
+	float f2 = -pow(0.4f * solution[0] - 12, 2) - pow(0.4f * solution[1] - 4, 2) + 4;
+	float res = max(f1, f2);
+	res = max(res, 0);
+	return res + noise(0, 50);
+}
+
+float test_3_rosenbrock_without_noise(vector<float> solution)
+{
+	float res = 0;
+	for (unsigned int i = 0; i < solution.size() - 1; ++i)
+	{
+		res = res + (pow(1 - solution[i], 2) + 100 * pow(solution[i + 1] - pow(solution[i], 2), 2));
+	}
+	res = -(res + 1);
+	return res;
+}
+
+float test_3_rosenbrock(vector<float> solution)
+{
+	float res = 0;
+	for (unsigned int i = 0; i < solution.size() - 1; ++i)
+	{
+		res = res + (pow(1 - solution[i], 2) + 100 * pow(solution[i + 1] - pow(solution[i], 2), 2));
+	}
+	res = -(res + 1);
+	return res + noise(0, 100);
+}
